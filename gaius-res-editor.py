@@ -267,6 +267,7 @@ _BOOT_REPLACEMENTS = [
     ('"Browser runtime error:"', '"浏览器运行时错误:"', False),
     ('"Unhandled browser promise rejection:"', '"未处理的浏览器 Promise 拒绝:"', False),
     ('"Gaius Client failed to start:"', '"Gaius 客户端启动失败:"', False),
+    ('"0% Initializing..."', '"0% 初始化中..."', False),
 ]
 
 
