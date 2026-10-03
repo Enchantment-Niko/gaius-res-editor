@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Gaius 26.3 资源包 GUI 编辑器 + 启动文本汉化（可滚动版）
-"""
-
 import os
 import re
 import sys
@@ -14,16 +10,13 @@ import struct
 import binascii
 import traceback
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 MAGIC = b'GAIUSVP1'
 HEADER_SIZE = 12
 DEFAULT_CHUNK = 8 * 1024 * 1024
 
-
-# ==========================================================================
-# 容器
-# ==========================================================================
 
 class GaiusPack:
     def __init__(self, index=None, data=None):
@@ -123,10 +116,6 @@ class GaiusPack:
         return {'files': len(self.index), 'payload_bytes': len(self.data)}
 
 
-# ==========================================================================
-# HTML 中提取 / 替换 vanilla 数组
-# ==========================================================================
-
 _VANILLA_KEYS = (
     '"vanilla":[',
     "'vanilla':[",
@@ -205,7 +194,7 @@ def load_from_html(html_path, debug=True):
         html = f.read()
     found = extract_vanilla_chunks(html, debug=debug)
     if not found:
-        raise ValueError("这不是 Gaius 26.3 的 HTML（找不到 vanilla 数组）")
+        raise ValueError("这不是 Gaius 的 HTML（找不到 vanilla 数组）")
     chunks, _, _ = found
     if debug:
         print(f"[DBG] 开始解码 {len(chunks)} 个 base64 分片...")
@@ -219,7 +208,8 @@ def load_from_html(html_path, debug=True):
     return GaiusPack.from_raw(decompressed)
 
 
-def save_to_html(html_path, pack, out_path, localize_boot=False, debug=True):
+def build_html(html_path, pack, out_path, localize_boot=False,
+               inject_files=None, target_prefix='/gaius/', debug=True):
     with open(html_path, 'r', encoding='utf-8', errors='replace') as f:
         html = f.read()
     gz = pack.to_gzip()
@@ -231,11 +221,15 @@ def save_to_html(html_path, pack, out_path, localize_boot=False, debug=True):
     ]
     if debug:
         print(f"[DBG] base64 分片 {len(chunks)} 块")
-    new_html = replace_vanilla_chunks(html, chunks)
+    html = replace_vanilla_chunks(html, chunks)
     if localize_boot:
-        new_html = localize_launcher_text(new_html, debug=debug)
+        html = localize_launcher_text(html, debug=debug)
+    if inject_files:
+        html = inject_indexeddb_into_html(html, inject_files,
+                                          target_prefix=target_prefix,
+                                          debug=debug)
     with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(new_html)
+        f.write(html)
 
 
 def load_from_file(path, debug=True):
@@ -250,51 +244,29 @@ def load_from_file(path, debug=True):
     return GaiusPack.from_raw(raw)
 
 
-# ==========================================================================
-# 启动器文本汉化
-# ==========================================================================
-
 _BOOT_REPLACEMENTS = [
+    ('"ONLINE SESSION"', '"在线会话"', False),
+    ('"PORTABLE HTML"', '"便携 HTML"', False),
+    ('"BROWSER CLIENT"', '"浏览器客户端"', False),
+    (r'VERSION (\d+\.\d+\.\d+)', r'版本 \1', True),
+    ('Gaius Client</strong> | independent browser software',
+     'Gaius 客户端</strong> | 独立浏览器软件', False),
+    ('HTML runtime | local storage enabled',
+     'HTML 运行时 | 本地存储已启用', False),
+    ('Retry startup', '重试启动', False),
+    ('Show diagnostics', '显示诊断', False),
+    ('Hide diagnostics', '隐藏诊断', False),
+    ('BROWSER CLIENT', '浏览器客户端', False),
     ('Starting Gaius Client 26.3...', '正在启动 Gaius 客户端 26.3...', False),
-    ('0% Initializing...', '0% 初始化中...', False),
-    ('"Preparing the browser runtime..."', '"正在准备浏览器运行时..."', False),
-    ('"Loading game assets..."', '"正在加载游戏资源..."', False),
-    ('"Starting the shader compiler..."', '"正在启动着色器编译器..."', False),
-    ('"Waiting for the first client frame..."', '"正在等待首帧..."', False),
     ('"Loading persistent browser storage..."', '"正在加载浏览器持久化存储..."', False),
     ('"Browser storage is ready ("', '"浏览器存储已就绪 ("', False),
     ('"); loading classes.js..."', '"); 正在加载 classes.js..."', False),
     ('"classes.js loaded; calling net.minecraft.client.main.Main.main(args)...\\n"',
      '"classes.js 已加载; 正在调用 net.minecraft.client.main.Main.main(args)...\\n"',
      False),
-    ('"Starting Gaius Client..."', '"正在启动 Gaius 客户端..."', False),
-    ('"Loading the 26.3 client runtime..."', '"正在加载 26.3 客户端运行时..."', False),
-    ('"Loading..."', '"加载中..."', False),
-    ('"Loading game resources..."', '"正在加载游戏资源..."', False),
-    ('"Loading world..."', '"正在加载世界..."', False),
-    ('"Connecting to world..."', '"正在连接世界..."', False),
-    ('"World ready"', '"世界已就绪"', False),
-    ('"Client screen ready: "', '"客户端画面就绪: "', False),
-    ('"Gaius Client failed to start:"', '"Gaius 客户端启动失败:"', False),
     ('"Browser runtime error:"', '"浏览器运行时错误:"', False),
     ('"Unhandled browser promise rejection:"', '"未处理的浏览器 Promise 拒绝:"', False),
-    ('"Startup has made no visible progress for 30 seconds. The browser is still running, but resource loading, world generation, or a long main-thread task may be stalled."',
-     '"启动已 30 秒无可见进展。浏览器仍在运行，但资源加载、世界生成或主线程长任务可能已卡住。"',
-     False),
-    ('"Restarting..."', '"重启中..."', False),
-    ('"Show diagnostics"', '"显示诊断"', False),
-    ('"Hide diagnostics"', '"隐藏诊断"', False),
-    ('>BROWSER CLIENT<', '>浏览器客户端<', False),
-    ('>VERSION 0.3.2<', '>版本 0.3.2<', False),
-    ('Gaius Client</strong> | independent browser software',
-     'Gaius 客户端</strong> | 独立浏览器软件', False),
-    ('>HTML runtime | local storage enabled<',
-     '>HTML 运行时 | 本地存储已启用<', False),
-    ('>Retry startup<', '>重试启动<', False),
-    ('>Show diagnostics<', '>显示诊断<', False),
-    ('"ONLINE SESSION"', '"在线会话"', False),
-    ('"PORTABLE HTML"', '"便携 HTML"', False),
-    ('"BROWSER CLIENT"', '"浏览器客户端"', False),
+    ('"Gaius Client failed to start:"', '"Gaius 客户端启动失败:"', False),
 ]
 
 
@@ -323,13 +295,115 @@ def localize_launcher_text(html, debug=True):
     return html
 
 
-# ==========================================================================
-# 可滚动容器
-# ==========================================================================
+INJECT_TEMPLATE = '''
+<script>
+(function gaiusIndexedDbInjector() {
+  const INJECT_FILES = __INJECT_FILES__;
+  const TARGET_PREFIX = "__TARGET_PREFIX__";
+
+  function log(message) {
+    const now = new Date();
+    const pad = (n, w) => String(n).padStart(w, "0");
+    const stamp = pad(now.getHours(), 2) + ":" + pad(now.getMinutes(), 2)
+      + ":" + pad(now.getSeconds(), 2) + "." + pad(now.getMilliseconds(), 3);
+    console.log("[" + stamp + "] [INFO] " + message);
+  }
+
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  async function writeAll() {
+    try {
+      await (window.__gaiusFsReady || Promise.resolve());
+    } catch (_) {}
+
+    for (const entry of INJECT_FILES) {
+      const targetPath = TARGET_PREFIX + entry.path;
+      const bytes = b64ToBytes(entry.data);
+
+      if (typeof window.__gaiusFsPutBytes === "function") {
+        if (window.__gaiusFsPutBytes(targetPath, bytes)) {
+          log("wrote " + targetPath + " via __gaiusFsPutBytes");
+          continue;
+        }
+      }
+      if (typeof window.__gaiusFsPut === "function") {
+        if (window.__gaiusFsPut(targetPath, entry.data)) {
+          log("wrote " + targetPath + " via __gaiusFsPut");
+          continue;
+        }
+      }
+      try {
+        const dbName = window.__gaiusStorageDatabaseName || "gaius-fs-v2-26.3";
+        const storeName = "files";
+        await new Promise((resolve) => {
+          const openReq = indexedDB.open(dbName);
+          openReq.onsuccess = () => {
+            const db = openReq.result;
+            const tx = db.transaction(storeName, "readwrite");
+            tx.objectStore(storeName).put({
+              path: targetPath,
+              value: bytes,
+              updatedAt: Date.now()
+            });
+            tx.oncomplete = () => {
+              log("wrote " + targetPath + " via IndexedDB");
+              db.close();
+              resolve();
+            };
+            tx.onerror = () => {
+              log("IndexedDB transaction failed: " + tx.error);
+              resolve();
+            };
+          };
+          openReq.onerror = () => {
+            log("IndexedDB open failed: " + openReq.error);
+            resolve();
+          };
+        });
+      } catch (e) {
+        log("exception: " + e);
+      }
+    }
+  }
+
+  if (document.readyState === "complete") {
+    setTimeout(writeAll, 2000);
+  } else {
+    window.addEventListener("load", () => setTimeout(writeAll, 2000));
+  }
+})();
+</script>
+'''
+
+
+def inject_indexeddb_into_html(html, files, target_prefix='/gaius/', debug=True):
+    payload = []
+    for path, data in files:
+        b64 = base64.b64encode(data).decode('ascii')
+        payload.append({"path": path.lstrip('/'), "data": b64})
+    snippet = (INJECT_TEMPLATE
+               .replace('__INJECT_FILES__', json.dumps(payload))
+               .replace('__TARGET_PREFIX__', target_prefix))
+    if "gaiusIndexedDbInjector" in html:
+        raise ValueError("这个 HTML 已经注入过 IndexedDB 注入器了")
+    idx = html.rfind("</body>")
+    if idx < 0:
+        html += snippet
+    else:
+        html = html[:idx] + snippet + html[idx:]
+    if debug:
+        for path, data in files:
+            print(f"[INJ] {path}: {len(data)} 字节")
+        print(f"[INJ] 目标前缀: {target_prefix}")
+    return html
+
 
 class ScrollableFrame(ttk.Frame):
-    """一个把子控件放进可滚动 Canvas 的容器。"""
-
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
@@ -346,7 +420,6 @@ class ScrollableFrame(ttk.Frame):
         self.inner.bind('<Configure>', self._on_inner_configure)
         self.canvas.bind('<Configure>', self._on_canvas_configure)
 
-        # 鼠标滚轮
         self._on_wheel = self._make_wheel_handler()
         self.bind_all_wheel_recursive(self.inner)
 
@@ -378,10 +451,6 @@ class ScrollableFrame(ttk.Frame):
         self.bind_all_wheel_recursive(self.inner)
 
 
-# ==========================================================================
-# 对话框
-# ==========================================================================
-
 class TextInputDialog(tk.Toplevel):
     def __init__(self, parent, title, label, default=''):
         super().__init__(parent)
@@ -409,23 +478,23 @@ class TextInputDialog(tk.Toplevel):
         self.destroy()
 
 
-# ==========================================================================
-# 主窗口
-# ==========================================================================
-
 class GaiusGUI:
     def __init__(self, root):
         self.root = root
-        root.title('Gaius 26.3 资源包编辑器（含启动器汉化）')
-        # 默认窗口小一点，避免一打开就超出屏幕
-        root.geometry('1200x720')
-        root.minsize(900, 520)
+        root.title('Gaius 资源包编辑器 + IndexedDB 注入器')
+        root.geometry('1200x780')
+        root.minsize(900, 560)
+
+        self._setup_fonts()
 
         self.source_path = tk.StringVar()
         self.output_path = tk.StringVar()
         self.filter_var = tk.StringVar()
         self.status_var = tk.StringVar(value='就绪')
         self.localize_boot_var = tk.BooleanVar(value=False)
+
+        self.inject_prefix = tk.StringVar(value='/gaius/')
+        self.inject_files = []
 
         self.pack = None
         self.is_html = False
@@ -438,16 +507,43 @@ class GaiusGUI:
         self._build_ui()
         self._log('Gaius 资源包编辑器已启动')
         self._log('支持: Gaius HTML (embedded.vanilla) / GAIUSVP1 裸包')
-        self._log('提示: 勾选「注入后汉化启动器」可在保存 HTML 时替换启动文本')
-        self._log('提示: 鼠标滚轮可滚动整个界面')
+        self._log('提示: 勾选「启动器汉化」后保存时会替换启动文本')
+        self._log('提示: 添加注入文件后点「保存并注入」即可一起写出')
+
+    def _setup_fonts(self):
+        families = set(tkfont.families(self.root))
+        preferred = ['Microsoft YaHei UI', 'Microsoft YaHei',
+                     '微软雅黑', 'PingFang SC', 'Noto Sans CJK SC']
+        chosen = None
+        for name in preferred:
+            if name in families:
+                chosen = name
+                break
+        if chosen is None:
+            chosen = 'TkDefaultFont'
+        for font_name in ('TkDefaultFont', 'TkTextFont', 'TkMenuFont',
+                          'TkHeadingFont', 'TkCaptionFont', 'TkTooltipFont'):
+            try:
+                f = tkfont.nametofont(font_name)
+                f.configure(family=chosen, size=9)
+            except Exception:
+                pass
+        mono = 'Consolas'
+        if mono not in families:
+            mono = 'Courier New'
+        try:
+            f = tkfont.nametofont('TkFixedFont')
+            f.configure(family=mono, size=9)
+        except Exception:
+            pass
+        self._font_family = chosen
+        self._mono_family = mono
 
     def _build_ui(self):
-        # 滚动容器
         self.scroll_frame = ScrollableFrame(self.root)
         self.scroll_frame.pack(fill='both', expand=True)
         container = self.scroll_frame.inner
 
-        # ---- 1. 文件 ----
         top = ttk.LabelFrame(container, text='1. 文件', padding=8)
         top.pack(fill='x', padx=10, pady=(10, 4))
         ttk.Label(top, text='输入:').grid(row=0, column=0, sticky='w')
@@ -462,7 +558,6 @@ class GaiusGUI:
             row=1, column=2, padx=2, pady=(4, 0))
         top.columnconfigure(1, weight=1)
 
-        # ---- 2. 启动器汉化 ----
         opt = ttk.LabelFrame(container, text='2. 启动器汉化', padding=8)
         opt.pack(fill='x', padx=10, pady=4)
         ttk.Checkbutton(
@@ -472,19 +567,16 @@ class GaiusGUI:
         ).pack(anchor='w')
         ttk.Label(
             opt,
-            text='勾选后，保存 HTML 时会自动把启动文本替换为中文；\n'
-                 '不勾选则保持原文。导出裸包 (.gz) 时此选项无效。',
+            text='勾选后，保存 HTML 时会自动替换启动文本（不碰 boot art）。',
             foreground='#666',
             justify='left',
         ).pack(anchor='w', pady=(4, 0))
 
-        # ---- 3. 包信息 ----
         info = ttk.LabelFrame(container, text='3. 包信息', padding=8)
         info.pack(fill='x', padx=10, pady=4)
         self.info_label = ttk.Label(info, text='（未加载）', justify='left')
         self.info_label.pack(anchor='w')
 
-        # ---- 4. 条目 + 5. 预览（左右分栏，固定高度）----
         mid = ttk.Frame(container)
         mid.pack(fill='x', padx=10, pady=4)
 
@@ -525,10 +617,9 @@ class GaiusGUI:
         self.preview_text = scrolledtext.ScrolledText(
             pv, wrap='none', height=10,
             bg='#1e1e1e', fg='#d4d4d4', insertbackground='#d4d4d4',
-            font=('Consolas', 10))
+            font=(self._mono_family, 10))
         self.preview_text.pack(fill='both', expand=True)
 
-        # ---- 6. 操作 ----
         ops = ttk.LabelFrame(container, text='6. 操作', padding=6)
         ops.pack(fill='x', padx=10, pady=4)
 
@@ -551,36 +642,57 @@ class GaiusGUI:
             side='left', padx=2)
         ttk.Button(r2, text='预览', command=self.preview).pack(
             side='left', padx=2)
+        ttk.Button(r2, text='导出裸包...', command=self.export_raw).pack(
+            side='left', padx=2)
+
+        inj = ttk.LabelFrame(container, text='7. IndexedDB 注入（可选）', padding=8)
+        inj.pack(fill='x', padx=10, pady=4)
+        ttk.Label(inj, text='目标前缀:').grid(row=0, column=0, sticky='w')
+        ttk.Entry(inj, textvariable=self.inject_prefix).grid(
+            row=0, column=1, sticky='ew', padx=4)
+        ttk.Label(
+            inj,
+            text='注入文件会写入 <前缀> + <文件名>。默认 /gaius/。',
+            foreground='#666',
+            justify='left',
+        ).grid(row=1, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        inj.columnconfigure(1, weight=1)
+
+        fl = ttk.Frame(inj)
+        fl.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(6, 0))
+        ttk.Button(fl, text='添加文件...', command=self.inject_add_file).pack(
+            side='left', padx=2)
+        ttk.Button(fl, text='移除选中', command=self.inject_remove_file).pack(
+            side='left', padx=2)
+        ttk.Button(fl, text='清空', command=self.inject_clear_files).pack(
+            side='left', padx=2)
+
+        self.inject_list = tk.Listbox(inj, height=5,
+                                      font=(self._font_family, 9))
+        self.inject_list.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(4, 0))
 
         r3 = ttk.Frame(ops)
         r3.pack(fill='x', pady=(6, 2))
-        ttk.Button(r3, text='保存 / 写出 (Ctrl+S)',
+        ttk.Button(r3, text='保存并注入 (Ctrl+S)',
                    command=self.save).pack(side='left', padx=2)
-        ttk.Button(r3, text='导出裸包...', command=self.export_raw).pack(
-            side='left', padx=2)
 
-        # ---- 7. 日志 ----
-        bot = ttk.LabelFrame(container, text='7. 日志', padding=6)
+        bot = ttk.LabelFrame(container, text='8. 日志', padding=6)
         bot.pack(fill='x', padx=10, pady=(4, 10))
         self.log_text = scrolledtext.ScrolledText(
             bot, wrap='none', height=8,
             bg='#111', fg='#d4d4d4', insertbackground='#d4d4d4',
-            font=('Consolas', 10))
+            font=(self._mono_family, 10))
         self.log_text.pack(fill='both', expand=True)
 
-        # 底部状态栏固定在根窗口
         ttk.Label(self.root, textvariable=self.status_var,
                   relief='sunken', anchor='w').pack(fill='x', side='bottom')
 
-        # 快捷键
         self.root.bind('<Control-s>', lambda e: self.save())
         self.root.bind('<Control-o>', lambda e: self.open_file())
         self.root.bind('<Delete>', lambda e: self.delete_selected())
 
-        # 界面构建完后刷新一次滚轮绑定
         self.root.after(500, self.scroll_frame.refresh_wheel_bindings)
 
-    # ----------------------------------------------------------------
     def _log(self, msg):
         self.log_text.insert('end', msg + '\n')
         self.log_text.see('end')
@@ -880,34 +992,50 @@ class GaiusGUI:
             out = self.output_path.get()
             if not out:
                 return
-        self._set_status('保存中...')
+        self._set_status('保存并注入中...')
         self.root.config(cursor='watch')
         self.root.update()
         try:
             localize = self.localize_boot_var.get()
+            inject_files = []
+            for p in self.inject_files:
+                with open(p, 'rb') as f:
+                    inject_files.append((os.path.basename(p), f.read()))
+
+            prefix = self.inject_prefix.get().strip() or '/gaius/'
+            if not prefix.endswith('/'):
+                prefix += '/'
+
             if self.is_html and out.lower().endswith(('.html', '.htm')):
                 if localize:
                     self._log('[ZH] 已启用启动器汉化')
-                save_to_html(self.source_path.get(), self.pack, out,
-                             localize_boot=localize, debug=True)
+                if inject_files:
+                    self._log(f'[INJ] 将注入 {len(inject_files)} 个文件，前缀 {prefix}')
+                build_html(self.source_path.get(), self.pack, out,
+                           localize_boot=localize,
+                           inject_files=inject_files or None,
+                           target_prefix=prefix,
+                           debug=True)
             else:
                 with open(out, 'wb') as f:
                     f.write(self.pack.to_gzip())
                 if localize:
-                    self._log('[!] 导出裸包时汉化选项无效（裸包不含 HTML 文本）')
+                    self._log('[!] 导出裸包时汉化选项无效')
+                if inject_files:
+                    self._log('[!] 导出裸包时注入选项无效（裸包不含 HTML）')
             self.dirty = False
             self._refresh_info()
             size = os.path.getsize(out)
             self._log(f'[✓] 已写出: {out} ({size/1024/1024:.2f} MB)')
-            self._set_status('保存完成')
+            self._set_status('完成')
             messagebox.showinfo('完成',
                                 f'已写出:\n{out}\n\n'
                                 f'{size/1024/1024:.2f} MB')
         except Exception as e:
-            self._log(f'[✗] 保存失败: {e}')
+            self._log(f'[✗] 失败: {e}')
             self._log(traceback.format_exc())
-            messagebox.showerror('保存失败', str(e))
-            self._set_status('保存失败')
+            messagebox.showerror('失败', str(e))
+            self._set_status('失败')
         finally:
             self.root.config(cursor='')
 
@@ -925,8 +1053,29 @@ class GaiusGUI:
         self._log(f'[✓] 已导出裸包: {out} '
                   f'({os.path.getsize(out)/1024/1024:.2f} MB)')
 
+    def inject_add_file(self):
+        ps = filedialog.askopenfilenames(
+            title='选择要注入到 IndexedDB 的文件（可多选）')
+        for p in ps:
+            self.inject_files.append(p)
+        self._refresh_inject_list()
 
-# ==========================================================================
+    def inject_remove_file(self):
+        sel = list(self.inject_list.curselection())
+        for i in reversed(sel):
+            del self.inject_files[i]
+        self._refresh_inject_list()
+
+    def inject_clear_files(self):
+        self.inject_files.clear()
+        self._refresh_inject_list()
+
+    def _refresh_inject_list(self):
+        self.inject_list.delete(0, 'end')
+        for p in self.inject_files:
+            self.inject_list.insert('end', f'{os.path.basename(p)}  <-  {p}')
+
+
 def main():
     root = tk.Tk()
     try:
