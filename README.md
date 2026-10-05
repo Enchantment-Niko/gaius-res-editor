@@ -303,7 +303,7 @@ Copyright (C) 2026 gaius-res-editor contributors
 适用性的默示担保。详见 GNU 通用公共许可证。
 
 你应该已经收到本程序附带的 GNU 通用公共许可证副本。如果没有，请参见
-https://www.gnu.org/licenses/。
+https://www.gnu.org/licenses/
 
 ---
 
